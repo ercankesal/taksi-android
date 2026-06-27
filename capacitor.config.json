@@ -1,0 +1,23 @@
+{
+  "appId": "com.gungoren.taksidurak",
+  "appName": "Taksi Sürücü",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "BackgroundGeolocation": {
+      "desiredAccuracy": 1,
+      "distanceFilter": 5,
+      "stopOnTerminate": false,
+      "startOnBoot": true,
+      "foregroundService": true,
+      "interval": 3000,
+      "fastestInterval": 2000
+    }
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#1a1d29"
+  }
+}

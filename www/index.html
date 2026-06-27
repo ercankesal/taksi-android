@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a1d29" />
+  <title>Taksi Sürücü</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1d29 0%, #2a2f3e 100%);
+      color: #e8eaf0;
+      min-height: 100vh;
+      padding: 20px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      padding-bottom: max(20px, env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #232838;
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.4);
+    }
+    h1 { text-align: center; color: #ffd000; font-size: 22px; margin-bottom: 4px; }
+    .subtitle { text-align: center; color: #8a90a0; font-size: 13px; margin-bottom: 24px; }
+    label { display: block; font-size: 12px; color: #b0b5c0; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      background: #1a1d29;
+      border: 2px solid #353a4a;
+      border-radius: 12px;
+      color: #e8eaf0;
+      font-size: 16px;
+      margin-bottom: 16px;
+      transition: border-color 0.15s;
+    }
+    input:focus { outline: none; border-color: #ffd000; }
+    input::placeholder { color: #4a5060; }
+    button {
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: linear-gradient(135deg, #ffd000 0%, #ffa500 100%); color: #1a1d29; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { opacity: 0.5; }
+    .btn-danger { background: #f87171; color: #1a1d29; margin-top: 8px; }
+    .btn-secondary { background: #353a4a; color: #e8eaf0; margin-top: 8px; }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #1a1d29;
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+    .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .pulse {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+      animation: pulse 2s infinite;
+    }
+    .pulse.off { background: #6b7280; animation: none; }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+      50% { box-shadow: 0 0 0 10px rgba(74, 222, 128, 0); }
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #353a4a;
+      font-size: 13px;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-row span:first-child { color: #8a90a0; }
+    .info-row span:last-child { color: #e8eaf0; font-weight: 600; }
+    .toast {
+      position: fixed;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      background: #232838;
+      color: #e8eaf0;
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: 1px solid #353a4a;
+      font-size: 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.4);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 9999;
+      max-width: 90%;
+    }
+    .toast.show { opacity: 1; }
+    .toast.error { background: #4a1a1a; border-color: #f87171; }
+    .hidden { display: none; }
+    .helper { text-align: center; font-size: 11px; color: #6b7280; margin-top: 16px; }
+    .perm-card {
+      background: #1a1d29;
+      border: 1px solid #353a4a;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .perm-card.warn { border-color: #f87171; background: #2a1a1a; }
+    .perm-card .perm-title { color: #ffd000; font-weight: 600; margin-bottom: 4px; font-size: 13px; }
+    .perm-card.warn .perm-title { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="card" id="register-card">
+    <h1>🚖 Sürücü Girişi</h1>
+    <p class="subtitle" id="station-name">Güngören Taksi Durağı</p>
+
+    <div class="perm-card warn" id="perm-warning" style="display:none">
+      <div class="perm-title">⚠️ Konum izni gerekli</div>
+      <div style="color:#b0b5c0;line-height:1.5">Uygulamaya <b>"Her zaman"</b> konum izni vermeniz gerekiyor. Yoksa ekran kapandığında GPS durur.</div>
+    </div>
+
+    <label for="name">Ad Soyad</label>
+    <input type="text" id="name" placeholder="Örn: Ahmet Yılmaz" autocomplete="name" />
+
+    <label for="plate">Plaka</label>
+    <input type="text" id="plate" placeholder="Örn: 34 ABC 123" maxlength="15" style="text-transform: uppercase;" />
+
+    <button class="btn-primary" id="btn-register">Taksiye Bağlan ve GPS Aç</button>
+    <p class="helper">📍 Konum iznine izin vermeniz gerekiyor</p>
+  </div>
+
+  <div class="card hidden" id="active-card">
+    <h1>🟢 Aktif</h1>
+    <p class="subtitle" id="driver-display"></p>
+
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="pulse" id="gps-dot"></div>
+        <span id="gps-status">GPS Aktif</span>
+      </div>
+      <span style="font-size:12px;color:#8a90a0" id="last-update">şimdi</span>
+    </div>
+
+    <div class="info-row"><span>Durum</span><span id="my-status">Müsait</span></div>
+    <div class="info-row"><span>Sunucu</span><span id="server-status">—</span></div>
+    <div class="info-row"><span>Konum</span><span id="my-coords">—</span></div>
+    <div class="info-row"><span>Doğruluk</span><span id="my-accuracy">—</span></div>
+    <div class="info-row"><span>Gönderilen</span><span id="sent-count">0</span></div>
+
+    <button class="btn-primary" id="btn-toggle-status" style="margin-top:20px">🔄 Durumu Değiştir</button>
+    <button class="btn-danger" id="btn-disconnect">⏹ Bağlantıyı Kes</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
