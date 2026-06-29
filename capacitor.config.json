@@ -1,0 +1,8 @@
+{
+  "appId": "com.gungoren.taksidurak",
+  "appName": "Taksi Sürücü",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
