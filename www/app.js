@@ -1,15 +1,16 @@
-// Taksi Sürücü - Offline çalışan, native plugin entegreli versiyon
+// Taksi Sürücü - Basit HTTP tabanlı, native plugin entegreli
 // Sunucu: Render'daki taksi-durak backend
+// Her konum güncellemesi basit HTTP POST olarak gönderilir — Socket.IO/WebSocket yok
 const SERVER_URL = 'https://taksi-durak.onrender.com';
-const SAVED_KEY = 'taksidurak_driver_v2';
+const SAVED_KEY = 'taksidurak_driver_v3';
 
-let socket = null;
-let myName = '', myPlate = '';
+let myName = '', myPlate = '', myDriverId = '';
 let myStatus = 'available';
 let sentCount = 0;
 let watchId = null;
 let nativeMode = false;
 let NativeGeolocation = null;
+let lastSendTime = 0;
 
 function toast(msg, isError = false) {
   const t = document.getElementById('toast');
@@ -20,20 +21,25 @@ function toast(msg, isError = false) {
   t._tid = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-// Capacitor native köprüsünü algıla
+function setStatus(text) {
+  const el = document.getElementById('server-status');
+  if (el) el.textContent = text;
+}
+
+function setGpsStatus(text) {
+  const el = document.getElementById('gps-status');
+  if (el) el.textContent = text;
+  const dot = document.getElementById('gps-dot');
+  if (dot) dot.classList.remove('off');
+}
+
 async function detectNative() {
   try {
-    // window.Capacitor Capacitor tarafından otomatik enjekte edilir
     if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
       nativeMode = true;
-      // BackgroundGeolocation plugin'i yüklü mü kontrol et
-      // Capacitor plugin'leri window.Capacitor.Plugins altında olur
-      if (window.Capacitor.Plugins && window.Capacitor.Plugins.BackgroundGeolocation) {
-        NativeGeolocation = window.Capacitor.Plugins.BackgroundGeolocation;
-        console.log('BackgroundGeolocation plugin hazır');
-      } else if (window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation) {
-        NativeGeolocation = window.Capacitor.Plugins.Geolocation;
-        console.log('Geolocation plugin hazır');
+      if (window.Capacitor.Plugins) {
+        NativeGeolocation = window.Capacitor.Plugins.Geolocation || window.Capacitor.Plugins.BackgroundGeolocation;
+        console.log('Native plugin:', NativeGeolocation ? NativeGeolocation.constructor?.name || 'var' : 'yok');
       }
       return true;
     }
@@ -43,7 +49,6 @@ async function detectNative() {
   return false;
 }
 
-// localStorage yardımcıları (WebView içinde çalışır)
 function loadSaved() {
   try {
     const raw = localStorage.getItem(SAVED_KEY);
@@ -53,102 +58,44 @@ function loadSaved() {
   } catch (e) {}
   return null;
 }
-function saveDriver(name, plate, status) {
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify({ name, plate, status })); } catch (e) {}
+function saveDriver(name, plate, status, id) {
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify({ name, plate, status, id })); } catch (e) {}
 }
 
-// Socket.IO benzeri minimal WebSocket istemcisi
-class MiniSocket {
-  constructor(url) {
-    this.url = url;
-    this.ws = null;
-    this.connected = false;
-    this.reconnectTimer = null;
-    this.handlers = {};
-  }
-  on(event, cb) { this.handlers[event] = cb; }
-  connect() {
-    return new Promise((resolve, reject) => {
-      const wsUrl = this.url.replace('https://', 'wss://').replace('http://', 'ws://') + '/socket.io/?EIO=4&transport=websocket';
-      this.ws = new WebSocket(wsUrl);
-      this.ws.binaryType = 'arraybuffer';
-      this.ws.onopen = () => {
-        this.send('0{"sid":"' + Math.random().toString(36).slice(2,12) + '","upgrades":[],"pingInterval":25000,"pingTimeout":5000}');
-        this.connected = true;
-        this.updateUI('🟢 Bağlı', true);
-        resolve();
-      };
-      this.ws.onclose = () => {
-        this.connected = false;
-        this.updateUI('❌ Kopuk, bekleniyor...', false);
-        this.scheduleReconnect();
-      };
-      this.ws.onerror = (e) => {
-        this.updateUI('❌ Hata', false);
-        reject(e);
-      };
-      this.ws.onmessage = (e) => this.handle(e.data);
+async function sendLocation(lat, lng, speed, heading) {
+  if (!myDriverId) return;
+  // 3 saniyede bir throttle
+  const now = Date.now();
+  if (now - lastSendTime < 3000) return;
+  lastSendTime = now;
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/driver/${myDriverId}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng, speed: speed || 0, heading: heading || 0, status: myStatus })
     });
-  }
-  send(data) {
-    if (this.ws && this.ws.readyState === 1) this.ws.send(data);
-  }
-  emit(event, data) {
-    this.send('42' + JSON.stringify([event, data]));
-  }
-  handle(msg) {
-    if (!msg) return;
-    const t = msg[0];
-    if (t === '2') this.send('3'); // ping -> pong
-    else if (t === '4') {
-      try {
-        const [event, payload] = JSON.parse(msg.slice(1));
-        if (this.handlers[event]) this.handlers[event](payload);
-      } catch (e) {}
+    if (res.ok) {
+      sentCount++;
+      const el = document.getElementById('sent-count');
+      if (el) el.textContent = sentCount;
+      setGpsStatus('GPS Aktif');
+    } else {
+      console.warn('Konum gönderilemedi:', res.status);
     }
+  } catch (e) {
+    console.warn('Konum gönder hatası:', e.message);
   }
-  updateUI(text, ok) {
-    const el = document.getElementById('server-status');
-    if (el) el.textContent = text;
-  }
-  scheduleReconnect() {
-    if (this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect().then(() => {
-        if (myName && myPlate) this.emit('driver:register', { name: myName, plate: myPlate });
-        toast('Yeniden bağlandı');
-      }).catch(() => this.scheduleReconnect());
-    }, 5000);
-  }
-  disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.ws) this.ws.close();
-  }
-}
-
-function sendLocation(lat, lng, speed, heading) {
-  if (!socket || !socket.connected) return;
-  socket.emit('driver:location', {
-    lat, lng,
-    speed: speed || 0,
-    heading: heading || 0,
-    status: myStatus
-  });
-  sentCount++;
-  const el = document.getElementById('sent-count');
-  if (el) el.textContent = sentCount;
-  const dot = document.getElementById('gps-dot');
-  if (dot) dot.classList.remove('off');
 }
 
 async function startGPS() {
+  // Önce native plugin dene
   if (nativeMode && NativeGeolocation) {
-    // Native plugin ile arka plan GPS
     try {
       // İzin iste
       if (NativeGeolocation.requestPermissions) {
         const perm = await NativeGeolocation.requestPermissions();
+        console.log('İzin sonucu:', JSON.stringify(perm));
         if (perm && perm.location && perm.location !== 'granted') {
           toast('Konum izni verilmedi', true);
         }
@@ -157,17 +104,17 @@ async function startGPS() {
       if (NativeGeolocation.addListener) {
         await NativeGeolocation.addListener('location', (loc) => {
           if (!loc) return;
-          document.getElementById('gps-status').textContent = 'GPS Aktif (arka plan)';
-          document.getElementById('my-coords').textContent = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
-          sendLocation(loc.latitude, loc.longitude, (loc.speed || 0) * 3.6, loc.heading || 0);
+          setGpsStatus('GPS Aktif (native)');
+          const el = document.getElementById('my-coords');
+          if (el) el.textContent = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+          sendLocation(loc.latitude, loc.longitude, loc.speed ? loc.speed * 3.6 : 0, loc.heading || 0);
         });
       }
-      // Başlat
+      // Başlat (varsa)
       if (NativeGeolocation.start) {
-        await NativeGeolocation.start({});
-        toast('Arka plan GPS başlatıldı');
-        return;
+        try { await NativeGeolocation.start({}); } catch (e) { console.log('start:', e.message); }
       }
+      return;
     } catch (e) {
       console.error('Native GPS hatası:', e);
     }
@@ -178,12 +125,12 @@ async function startGPS() {
     toast('GPS desteklenmiyor', true);
     return;
   }
-  if (watchId !== null) return; // zaten çalışıyor
-  document.getElementById('gps-status').textContent = 'GPS Aktif (web)';
+  if (watchId !== null) return;
+  setGpsStatus('GPS Aktif (web)');
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
-      document.getElementById('gps-status').textContent = 'GPS Aktif';
-      document.getElementById('my-coords').textContent = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+      const el = document.getElementById('my-coords');
+      if (el) el.textContent = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
       sendLocation(pos.coords.latitude, pos.coords.longitude, (pos.coords.speed || 0) * 3.6, 0);
     },
     (err) => {
@@ -207,27 +154,44 @@ function stopGPS() {
   }
 }
 
-async function connectAndRegister() {
-  socket = new MiniSocket(SERVER_URL);
-  socket.on('driver:registered', () => {
+async function registerAndStart() {
+  setStatus('🔄 Kaydediliyor...');
+  try {
+    const res = await fetch(`${SERVER_URL}/api/driver/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: myName, plate: myPlate })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Kayıt başarısız');
+
+    myDriverId = data.id;
+    saveDriver(myName, myPlate, myStatus, myDriverId);
+    setStatus('🟢 Bağlı');
+
     document.getElementById('register-card').classList.add('hidden');
     document.getElementById('active-card').classList.remove('hidden');
     document.getElementById('driver-display').textContent = `${myName} • ${myPlate}`;
     document.getElementById('my-status').textContent = myStatus === 'busy' ? '🔴 Meşgul' : '🟢 Müsait';
+
     startGPS();
     toast('Bağlantı kuruldu');
-  });
-  socket.on('driver:kicked', () => {
-    toast('Yeni bağlantı açıldı, çıkılıyor', true);
-    setTimeout(() => disconnectAll(), 2000);
-  });
-  await socket.connect();
-  socket.emit('driver:register', { name: myName, plate: myPlate });
+  } catch (e) {
+    setStatus('❌ Hata: ' + e.message);
+    toast('Bağlantı hatası: ' + e.message, true);
+    throw e;
+  }
 }
 
-function disconnectAll() {
+async function disconnectAll() {
   stopGPS();
-  if (socket) socket.disconnect();
+  if (myDriverId) {
+    try {
+      await fetch(`${SERVER_URL}/api/driver/${myDriverId}`, { method: 'DELETE' });
+    } catch (e) {}
+  }
+  myDriverId = '';
+  setStatus('—');
   document.getElementById('active-card').classList.add('hidden');
   document.getElementById('register-card').classList.remove('hidden');
 }
@@ -240,20 +204,26 @@ document.getElementById('btn-register').onclick = async () => {
     return;
   }
   myName = name; myPlate = plate;
-  saveDriver(name, plate, myStatus);
   try {
-    await connectAndRegister();
+    await registerAndStart();
   } catch (e) {
-    toast('Sunucuya bağlanılamadı', true);
-    console.error(e);
+    console.error('Register error:', e);
   }
 };
 
-document.getElementById('btn-toggle-status').onclick = () => {
+document.getElementById('btn-toggle-status').onclick = async () => {
   myStatus = myStatus === 'available' ? 'busy' : 'available';
   document.getElementById('my-status').textContent = myStatus === 'busy' ? '🔴 Meşgul' : '🟢 Müsait';
-  if (socket && socket.connected) socket.emit('driver:status', myStatus);
-  saveDriver(myName, myPlate, myStatus);
+  if (myDriverId) {
+    try {
+      await fetch(`${SERVER_URL}/api/driver/${myDriverId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: myStatus })
+      });
+    } catch (e) {}
+  }
+  saveDriver(myName, myPlate, myStatus, myDriverId);
 };
 
 document.getElementById('btn-disconnect').onclick = disconnectAll;
@@ -261,7 +231,7 @@ document.getElementById('btn-disconnect').onclick = disconnectAll;
 // Sayfa açılınca
 (async () => {
   const isNative = await detectNative();
-  console.log('Native modu:', isNative, 'Plugin:', NativeGeolocation ? 'var' : 'yok');
+  console.log('Native modu:', isNative);
 
   const saved = loadSaved();
   if (saved) {
@@ -271,5 +241,6 @@ document.getElementById('btn-disconnect').onclick = disconnectAll;
     if (saved.status === 'busy') myStatus = 'busy';
     myName = saved.name;
     myPlate = saved.plate;
+    if (saved.id) myDriverId = saved.id;
   }
 })();
