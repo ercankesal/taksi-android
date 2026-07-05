@@ -23,16 +23,46 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Sync web assets to Android
+      - name: Sync web assets
         run: npx cap sync android
 
-      - name: Ensure AndroidManifest has location permissions and foreground service
+      - name: Add location permissions and cleartext config
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
-          # İzinler zaten yoksa ekle
-          if ! grep -q "ACCESS_BACKGROUND_LOCATION" $MANIFEST; then
+
+          # İzinleri ekle (eğer yoksa)
+          if ! grep -q "ACCESS_FINE_LOCATION" $MANIFEST; then
             sed -i 's|<uses-permission android:name="android.permission.INTERNET" />|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />|' $MANIFEST
           fi
+
+          # usesCleartextTraffic ekle (uygulama tag'ine)
+          if ! grep -q "usesCleartextTraffic" $MANIFEST; then
+            sed -i 's|<application |<application android:usesCleartextTraffic="true" |' $MANIFEST
+          fi
+
+          # network_security_config ekle
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/network_security_config.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">taksi-durak.onrender.com</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>
+EOF
+
+          # Network security config'i manifest'e bağla
+          if ! grep -q "networkSecurityConfig" $MANIFEST; then
+            sed -i 's|android:usesCleartextTraffic="true"|android:usesCleartextTraffic="true"\n        android:networkSecurityConfig="@xml/network_security_config"|' $MANIFEST
+          fi
+
+          cat $MANIFEST | head -25
 
       - name: Build APK
         working-directory: android
