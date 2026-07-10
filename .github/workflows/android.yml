@@ -26,54 +26,42 @@ jobs:
       - name: Sync web assets
         run: npx cap sync android
 
-      - name: Patch manifest
+      - name: Show original manifest
+        run: cat android/app/src/main/AndroidManifest.xml
+
+      - name: Patch AndroidManifest with all needed permissions and cleartext
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
+
+          # Create network security config file
           mkdir -p android/app/src/main/res/xml
-          echo '<?xml version="1.0" encoding="utf-8"?>
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'NETCFG'
+          <?xml version="1.0" encoding="utf-8"?>
           <network-security-config>
               <base-config cleartextTrafficPermitted="true">
                   <trust-anchors>
                       <certificates src="system" />
                   </trust-anchors>
               </base-config>
-          </network-security-config>' > android/app/src/main/res/xml/network_security_config.xml
+          </network-security-config>
+          NETCFG
 
-          # Use awk for safer multi-line replacement
-          awk '
-          /<manifest / && !done {
-            print
-            while ((getline line) > 0) {
-              if (line ~ /<uses-permission /) {
-                print line
-              } else if (line ~ /<\/manifest>/) {
-                # insert permissions before </manifest>
-                print "    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />"
-                print "    <uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />"
-                print "    <uses-permission android:name=\"android.permission.ACCESS_BACKGROUND_LOCATION\" />"
-                print "    <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />"
-                print "    <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_LOCATION\" />"
-                print "    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />"
-                print "    <uses-permission android:name=\"android.permission.WAKE_LOCK\" />"
-                print line
-                done = 1
-              } else {
-                print line
-              }
-            }
-            next
-          }
-          /<application / && !app_done {
-            sub(/<application /, "<application android:usesCleartextTraffic=\"true\" android:networkSecurityConfig=\"@xml/network_security_config\" ")
-            app_done = 1
-          }
-          { print }
-          ' $MANIFEST > $MANIFEST.new && mv $MANIFEST.new $MANIFEST
-          cat $MANIFEST
+          # Add location permissions right after the INTERNET permission line
+          if ! grep -q 'ACCESS_FINE_LOCATION' "$MANIFEST"; then
+            sed -i '/<uses-permission android:name="android.permission.INTERNET" \/>/a\    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' "$MANIFEST"
+          fi
+
+          # Add cleartext + networkSecurityConfig to <application ...>
+          if ! grep -q 'usesCleartextTraffic' "$MANIFEST"; then
+            sed -i 's|<application |<application android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config" |' "$MANIFEST"
+          fi
+
+          echo "=== Patched manifest ==="
+          cat "$MANIFEST"
 
       - name: Build APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon 2>&1 | tail -30
+        run: ./gradlew assembleDebug --no-daemon 2>&1 | tail -20
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
